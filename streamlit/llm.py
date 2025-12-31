@@ -1,12 +1,13 @@
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, FewShotChatMessagePromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
+from config import answer_examples
 
 store = {}
 
@@ -49,9 +50,8 @@ def get_dictionary_chain():
     return dictionary_chain
 
 
-def get_rag_chain():
+def get_history_retriever():
     llm = get_llm()
-
     contextualize_q_system_prompt = (
         "Given a chat history and the latest user question "
         "which might reference context in the chat history, "
@@ -72,6 +72,23 @@ def get_rag_chain():
         llm, get_retriever(), contextualize_q_prompt
     )
 
+    return history_aware_retriever
+
+
+def get_rag_chain():
+    llm = get_llm()
+    example_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("human", "{input}"),
+            ("ai", "{answer}")
+        ]
+    )
+
+    few_shot_prompt = FewShotChatMessagePromptTemplate(
+        example_prompt=example_prompt,
+        examples=answer_examples
+    )
+
     system_prompt = (
         "당신은 소득세법 전문가입니다. 사용자의 소득세법에 관한 질문에 답변해주세요"
         "아래에 제공된 문서를 활용해서 답변해주시고"
@@ -85,11 +102,13 @@ def get_rag_chain():
     qa_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
+            few_shot_prompt,
             MessagesPlaceholder("chat_history"),
             ("human", "{input}")
         ]
     )
 
+    history_aware_retriever = get_history_retriever()
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
